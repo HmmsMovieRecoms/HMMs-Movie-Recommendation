@@ -1,89 +1,64 @@
-#include "hmm_CF.h"
-
-#define MaxOccupations 22
-#define MaxZipCodeGroups 20
+#define MaxUsers MaxLenMC                /* Max number of users */ 
+#define MaxMovies 10                     /* Max number of movies */ 
+#define MaxWatchedMovies 10	             /* Max number of movies watched by a user */
+#define MaxUsersWatching 10	             /* Max number of users who watched a movie */
+#define MaxOccupations 22                /* Max number of occupations */
+#define MaxZipCodeGroups 20              /* Max number of Zipcode groups */ 
+#define MaxFeatures 4                    /* Max number of features (CF or CB) */
+#define MaxGenres 25
 
 // A movie watched by a user
-typedef struct WatchedMovie_CF{      
+typedef struct WatchedMovie{      
 	int Movie_Id;                    	 
 	float Score;  
 	int Timestamp;
-} WatchedMovie_CF;
+} WatchedMovie;
 
 // A user
-typedef struct User_CF{      
+typedef struct User{      
 	int User_Id;  
 	int age;
 	char gender;
 	char occupation[50];
 	char zipCode[6];
 	int NbWatchedMovies;   	
-	WatchedMovie_CF LastWatchedMovies[MaxMovies];
-} User_CF;
+	WatchedMovie * LastWatchedMovies;
+} User;
 
 // A user who watched a movie
-typedef struct UsersWatching_CF{      
+typedef struct UsersWatching{      
 	int User_Id;                    	 
 	float Score;                         
 	int Timestamp;
-} UsersWatching_CF;
+} UsersWatching;
 
 // A movie
-typedef struct Movie_CF{      
+typedef struct Movie{      
 	int Movie_Id;                    	 
+	int Release_date;  
+	float Vote_average;
+	int Vote_count;
+	int Genres[MaxGenres];
+	int NbGenres;
 	char Title[100];
 	int NbUsersWatching;	
-	UsersWatching_CF TheUsersWatching[MaxUsers];
-} Movie_CF;
-
+	UsersWatching * TheUsersWatching;
+} Movie;
 
 // A movie recommended to a user
-typedef struct MovieRecom_CF{      
+typedef struct MovieRecom{      
 	int Movie_Id; 
 	int Frequency;
 	double Distance;
 	double Importance; 
-} MovieRecom_CF;
+	float PredictedScore;
+} MovieRecom;
 
-// An observation of a Markov chain
-typedef struct Couple_CF{      
-	int State;                    	 
-	int Symbol;                         
-} Couple_CF;
-
-// A Markov chain
-typedef struct MarkovChain_CF{      
-	int NbCouples;                
-	Couple_CF Elements[MaxUsers];        
-} MC_CF;
-
-// Displays the content of a Markov chain
-void DisplayMC_CF(MC_CF Delta){
-	int i;
-	
-	for(i=0;(i<Delta.NbCouples);i++){
-		printf("(%i,%i)\t",Delta.Elements[i].State,Delta.Elements[i].Symbol);
-	}
-	printf("\n");
-	return;
-}
-
-// Prints the content of a Markov chain in a file
-void DisplayMCfile_CF(MC_CF Delta, FILE ** f){
-	int i;
-	
-	for(i=0;(i<Delta.NbCouples);i++){
-		fprintf((*f),"(%i,%i)",Delta.Elements[i].State,Delta.Elements[i].Symbol);
-	}
-	fprintf((*f),"\n");
-	return;
-}
 
 // Reads the movie data 
-int ReadMovies_CF(char * MoviesFileName, Movie_CF TheMovies[MaxMovies]){
+int ReadMovies(char * MoviesFileName, Movie * TheMovies){
 	FILE * f;
-	int i,k,Release_date,Vote_count,Genre;
-	float Vote_average;
+	int i,j,k,Genre;
 	char c;
 	
 	f = fopen(MoviesFileName, "rt");
@@ -94,15 +69,19 @@ int ReadMovies_CF(char * MoviesFileName, Movie_CF TheMovies[MaxMovies]){
 	i = 0;
 
 	while(!feof(f)){
-		fscanf(f,"%i,%i,",&(TheMovies[i].Movie_Id),&Release_date);
-		fscanf(f,"%g,%i,{",&Vote_average,&Vote_count);
+		fscanf(f,"%i,%i,",&(TheMovies[i].Movie_Id),&(TheMovies[i].Release_date));
+		fscanf(f,"%g,%i,{",&(TheMovies[i].Vote_average),&(TheMovies[i].Vote_count));
+		j = 0;
 		do{
 			fscanf(f,"%i%c",&Genre,&c);
+			TheMovies[i].Genres[j] = Genre;
+			j++;
 			if((c != ',')&&(c != '}')){
 				printf("Movie genre format [line %i] [movie_id %i]\n",i+1,TheMovies[i].Movie_Id);
 				return -1;
 			}
 		}while(c != '}');
+		TheMovies[i].NbGenres = j;
 		
 		fscanf(f,",#");
 		k = 0;
@@ -117,14 +96,13 @@ int ReadMovies_CF(char * MoviesFileName, Movie_CF TheMovies[MaxMovies]){
 		fscanf(f,"\n");
 		i++;
 	}
+
 	fclose(f);
 	return i;
 }
 
-
-
 // Reads the user data 
-int ReadUsers_CF(char * UsersFileName, User_CF TheUsers[MaxUsers]){
+int ReadUsers(char * UsersFileName, User * TheUsers){
 	FILE * f;
 	int i,j;
 	char c;
@@ -165,71 +143,33 @@ int ReadUsers_CF(char * UsersFileName, User_CF TheUsers[MaxUsers]){
 	return i;
 }
 
-// Function of partitionnement for the QuickSort
-int PartitionWatchedMovies_Timestamp_CF(WatchedMovie_CF TheWatchedMovies[MaxMovies], int low, int high) {
-    float pivot = TheWatchedMovies[high].Timestamp; // pivot
-    int i = (low - 1); // Index of the lowest element
-
-    for (int j = low; j <= high - 1; j++) {
-        // If the current element is lower than pivot
-        if (TheWatchedMovies[j].Timestamp <= pivot) {
-            i++; // Increments the index of the lowest element 
-			
-            swapInt(&TheWatchedMovies[i].Movie_Id, &TheWatchedMovies[j].Movie_Id);
-            swapInt(&TheWatchedMovies[i].Timestamp, &TheWatchedMovies[j].Timestamp);
-            swapFloat(&TheWatchedMovies[i].Score, &TheWatchedMovies[j].Score);
-        }
-    }
-    swapInt(&TheWatchedMovies[i+1].Movie_Id, &TheWatchedMovies[high].Movie_Id);
-    swapInt(&TheWatchedMovies[i+1].Timestamp, &TheWatchedMovies[high].Timestamp);
-    swapFloat(&TheWatchedMovies[i+1].Score, &TheWatchedMovies[high].Score);
-    return (i + 1);
-}
-
-
-// QuickSort of the movies watched by a user -- by Timestamp
-void QuicksortWatchedMovies_Timestamp_CF(WatchedMovie_CF TheWatchedMovies[MaxMovies], int low, int high) {
-	int i,pi,piMax, piMin;
-    if (low < high) {
-        pi = PartitionWatchedMovies_Timestamp_CF(TheWatchedMovies, low, high);
-		piMax = pi;
-		piMin = pi;
-		i = 0;
-		while(i < piMin){
-			if(TheWatchedMovies[i].Timestamp == TheWatchedMovies[pi].Timestamp){
-				swapInt(&TheWatchedMovies[i].Movie_Id, &TheWatchedMovies[piMin-1].Movie_Id);
-				swapInt(&TheWatchedMovies[i].Timestamp, &TheWatchedMovies[piMin-1].Timestamp);
-				swapFloat(&TheWatchedMovies[i].Score, &TheWatchedMovies[piMin-1].Score);
-				piMin--;
-				i = 0;
-			}else{
-				i++;
-			}
-		}
-		QuicksortWatchedMovies_Timestamp_CF(TheWatchedMovies, low, piMin - 1);
-        QuicksortWatchedMovies_Timestamp_CF(TheWatchedMovies, piMax + 1, high);
-    }
-}
-
-
-int ReadWatchedMovies_CF(char * WatchedMoviesFileName, User_CF TheUsersTmp[MaxUsers], int * NbUsers, int TmaxWatchedMovies){
-	FILE * f;
-	int i,j,k,Nb_users,user_id,movie_id,timestamp,new_user;
-	int NbWatchedMovies[MaxUsers], TheUsersId[MaxUsers];
-	char c;
+// Reads the ratings data ordered by user ids 
+int ReadRatings_Users(char * RatingsFileName, User * TheUsersTmp, int * NbUsers, int TmaxWatchedMovies, char * UsersSequentialFileName){
+	FILE *f, *g;
+	int i,j,k,user_id,movie_id,timestamp;
+	char c, FileName[100];
 	float rating;
-	WatchedMovie_CF LastWatchedMovies[MaxUsers][MaxMovies];
-	
-	for(i=0;(i<MaxUsers);i++){
-		NbWatchedMovies[i] = 0;
-	}
 
-	f = fopen(WatchedMoviesFileName, "rt");
+	int Nb_users,new_user,NbWatchedMovies,CurrentUserId,*TheUsersId;
+	WatchedMovie * LastWatchedMovies;
+
+	TheUsersId  = (int *)malloc(MaxUsers*sizeof(int));
+	LastWatchedMovies = (WatchedMovie *)malloc(MaxMovies*sizeof(WatchedMovie));
+
+	strcpy(FileName,RatingsFileName);
+	strcat(FileName,"_users.csv");
+	f = fopen(FileName, "rt");
 	if(!f){
-		printf("%s\n",WatchedMoviesFileName);
+		printf("%s\n",FileName);
 		return -1;
 	} 
-	
+
+	g = fopen(UsersSequentialFileName, "wt");
+	if(!g){
+		printf("%s\n",UsersSequentialFileName);
+		return -1;
+	} 
+
 	// Skipping the first line
 	do{
 		fscanf(f,"%c",&c);
@@ -237,13 +177,50 @@ int ReadWatchedMovies_CF(char * WatchedMoviesFileName, User_CF TheUsersTmp[MaxUs
 	
 	i = 0;
 	Nb_users = 0;
+	fscanf(f,"%i;%i;%f;%i\n",&user_id,&movie_id,&rating,&timestamp);
+	CurrentUserId = user_id;
+	NbWatchedMovies = 0;
+	
 	while(!feof(f)){
-		fscanf(f,"%i\t%i\t%f\t%i\n",&user_id,&movie_id,&rating,&timestamp);
-		LastWatchedMovies[user_id][NbWatchedMovies[user_id]].Movie_Id = movie_id;
-		LastWatchedMovies[user_id][NbWatchedMovies[user_id]].Score = rating;
-		LastWatchedMovies[user_id][NbWatchedMovies[user_id]].Timestamp = timestamp;
-		(NbWatchedMovies[user_id])++;
-		i++;
+		if(user_id != CurrentUserId){
+			j = CurrentUserId;
+			TheUsersTmp[j-1].User_Id = j;
+			if(NbWatchedMovies <= TmaxWatchedMovies){
+				TheUsersTmp[j-1].NbWatchedMovies = NbWatchedMovies;
+				for(k=0;(k < NbWatchedMovies); k++){
+					TheUsersTmp[j-1].LastWatchedMovies[k].Movie_Id = LastWatchedMovies[k].Movie_Id;
+					TheUsersTmp[j-1].LastWatchedMovies[k].Score = LastWatchedMovies[k].Score;
+					TheUsersTmp[j-1].LastWatchedMovies[k].Timestamp = LastWatchedMovies[k].Timestamp;
+				}
+			}else{
+				TheUsersTmp[j-1].NbWatchedMovies = TmaxWatchedMovies;
+				for(k=0;(k < TmaxWatchedMovies); k++){
+					TheUsersTmp[j-1].LastWatchedMovies[k].Movie_Id = LastWatchedMovies[(NbWatchedMovies - TmaxWatchedMovies) + k].Movie_Id;
+					TheUsersTmp[j-1].LastWatchedMovies[k].Score = LastWatchedMovies[(NbWatchedMovies - TmaxWatchedMovies) + k].Score;
+					TheUsersTmp[j-1].LastWatchedMovies[k].Timestamp = LastWatchedMovies[(NbWatchedMovies - TmaxWatchedMovies) + k].Timestamp;
+				}
+			}
+
+			fprintf(g,"%i",j);
+			for(k=0;(k < NbWatchedMovies); k++){
+				fprintf(g,"(%i,%.1f)",LastWatchedMovies[k].Movie_Id,LastWatchedMovies[k].Score);
+			}
+			fprintf(g,"\n");
+
+			for(k=CurrentUserId+1;(k <= user_id-1); k++){
+				fprintf(g,"%i\n",k);
+				TheUsersTmp[k-1].User_Id = k;
+				TheUsersTmp[k-1].NbWatchedMovies = 0;
+			}
+
+			CurrentUserId = user_id;
+			NbWatchedMovies = 0;
+		}
+
+		LastWatchedMovies[NbWatchedMovies].Movie_Id = movie_id;
+		LastWatchedMovies[NbWatchedMovies].Score = rating;
+		LastWatchedMovies[NbWatchedMovies].Timestamp = timestamp;
+		(NbWatchedMovies)++;
 		
 		j = 0;
 		new_user = 1;
@@ -260,185 +237,261 @@ int ReadWatchedMovies_CF(char * WatchedMoviesFileName, User_CF TheUsersTmp[MaxUs
 			TheUsersId[Nb_users] = user_id;
 			Nb_users++;
 		}
+
+		i++;
+		fscanf(f,"%i;%i;%f;%i\n",&user_id,&movie_id,&rating,&timestamp);
+		if(feof(f)){
+			if(user_id == CurrentUserId){
+				LastWatchedMovies[NbWatchedMovies].Movie_Id = movie_id;
+				LastWatchedMovies[NbWatchedMovies].Score = rating;
+				LastWatchedMovies[NbWatchedMovies].Timestamp = timestamp;
+				(NbWatchedMovies)++;
+			}
+
+			j = CurrentUserId;
+			TheUsersTmp[j-1].User_Id = j;
+			if(NbWatchedMovies <= TmaxWatchedMovies){
+				TheUsersTmp[j-1].NbWatchedMovies = NbWatchedMovies;
+				for(k=0;(k < NbWatchedMovies); k++){
+					TheUsersTmp[j-1].LastWatchedMovies[k].Movie_Id = LastWatchedMovies[k].Movie_Id;
+					TheUsersTmp[j-1].LastWatchedMovies[k].Score = LastWatchedMovies[k].Score;
+					TheUsersTmp[j-1].LastWatchedMovies[k].Timestamp = LastWatchedMovies[k].Timestamp;
+				}
+			}else{
+				TheUsersTmp[j-1].NbWatchedMovies = TmaxWatchedMovies;
+				for(k=0;(k < TmaxWatchedMovies); k++){
+					TheUsersTmp[j-1].LastWatchedMovies[k].Movie_Id = LastWatchedMovies[(NbWatchedMovies - TmaxWatchedMovies) + k].Movie_Id;
+					TheUsersTmp[j-1].LastWatchedMovies[k].Score = LastWatchedMovies[(NbWatchedMovies - TmaxWatchedMovies) + k].Score;
+					TheUsersTmp[j-1].LastWatchedMovies[k].Timestamp = LastWatchedMovies[(NbWatchedMovies - TmaxWatchedMovies) + k].Timestamp;
+				}
+			}
+
+			fprintf(g,"%i",j);
+			for(k=0;(k < NbWatchedMovies); k++){
+				fprintf(g,"(%i,%.1f)",LastWatchedMovies[k].Movie_Id,LastWatchedMovies[k].Score);
+			}
+			fprintf(g,"\n");
+			
+			if(user_id != CurrentUserId){
+				for(k=CurrentUserId+1;(k <= user_id-1); k++){
+					fprintf(g,"%i\n",k);
+					TheUsersTmp[k-1].User_Id = k;
+					TheUsersTmp[k-1].NbWatchedMovies = 0;
+				}
+				TheUsersTmp[user_id-1].User_Id = user_id;
+				TheUsersTmp[user_id-1].NbWatchedMovies = 1;
+				TheUsersTmp[user_id-1].LastWatchedMovies[0].Movie_Id = movie_id;
+				TheUsersTmp[user_id-1].LastWatchedMovies[0].Score = rating;
+				TheUsersTmp[user_id-1].LastWatchedMovies[0].Timestamp = timestamp;
+				
+				fprintf(g,"%i(%i,%.1f)\n",user_id,movie_id,rating);
+				Nb_users++;
+			}
+			i++;
+		}
 	}
 	fclose(f);
+	fclose(g);
+
+	free(TheUsersId);
+	free(LastWatchedMovies);
 	
-	for(j=1;(j<=Nb_users);j++){
-		QuicksortWatchedMovies_Timestamp_CF(LastWatchedMovies[j],0,NbWatchedMovies[j]-1);
-		if((TmaxWatchedMovies <= 0)||(NbWatchedMovies[j] <= TmaxWatchedMovies)){
-			TheUsersTmp[j-1].User_Id = j;
-			TheUsersTmp[j-1].NbWatchedMovies = NbWatchedMovies[j];
-			for(k=0;(k < NbWatchedMovies[j]); k++){
-				TheUsersTmp[j-1].LastWatchedMovies[k].Movie_Id = LastWatchedMovies[j][k].Movie_Id;
-				TheUsersTmp[j-1].LastWatchedMovies[k].Score = LastWatchedMovies[j][k].Score;
-				TheUsersTmp[j-1].LastWatchedMovies[k].Timestamp = LastWatchedMovies[j][k].Timestamp;
-			}
-		}else{
-			TheUsersTmp[j-1].User_Id = j;
-			TheUsersTmp[j-1].NbWatchedMovies = TmaxWatchedMovies;
-			for(k=0;(k < TmaxWatchedMovies); k++){
-				TheUsersTmp[j-1].LastWatchedMovies[k].Movie_Id = LastWatchedMovies[j][(NbWatchedMovies[j] - TmaxWatchedMovies) + k].Movie_Id;
-				TheUsersTmp[j-1].LastWatchedMovies[k].Score = LastWatchedMovies[j][(NbWatchedMovies[j] - TmaxWatchedMovies) + k].Score;
-				TheUsersTmp[j-1].LastWatchedMovies[k].Timestamp = LastWatchedMovies[j][(NbWatchedMovies[j] - TmaxWatchedMovies) + k].Timestamp;
-			}
-		}
-	}
-	
-/**	
-	for(j=0;(j<Nb_users);j++){
-//		printf("%i",TheUsersTmp[j].User_Id);
-//		printf("%i,%i,",TheUsersTmp[j].User_Id,TheUsersTmp[j].NbWatchedMovies);
-		for(k=0;(k < TheUsersTmp[j].NbWatchedMovies); k++){
-			printf("%i\t%i\t%.0f\t%i\n",TheUsersTmp[j].User_Id,TheUsersTmp[j].LastWatchedMovies[k].Movie_Id,TheUsersTmp[j].LastWatchedMovies[k].Score,TheUsersTmp[j].LastWatchedMovies[k].Timestamp);
-//			printf("(%i,%.0f)",TheUsersTmp[j].LastWatchedMovies[k].Movie_Id,TheUsersTmp[j].LastWatchedMovies[k].Score);
-//			printf("(%i,%.0f,%i)",TheUsersTmp[j].LastWatchedMovies[k].Movie_Id,TheUsersTmp[j].LastWatchedMovies[k].Score,TheUsersTmp[j].LastWatchedMovies[k].Timestamp);
-		}
-//		printf("\n");
-	}
-	
-**/	
 	(*NbUsers) = Nb_users;
 	return i;
 }
 
-void UpdateUsers_CF(User_CF TheUsersTmp[MaxUsers], int NbUsersTmp, User_CF TheUsers[MaxUsers], int NbUsers){
+
+// Reads the ratings data ordered by movie ids 
+int ReadRatings_Movies(char * RatingsFileName, Movie * TheMoviesTmp, int * NbMovies, int TmaxUsersWatching, char * MoviesSequentialFileName){
+	FILE *f, *g;
+	int i,j,k,user_id,movie_id,timestamp;
+	char c, FileName[100];
+	float rating;
+
+	int Nb_movies,new_movie,NbUsersWatching,CurrentMovieId,*TheMoviesId;
+	UsersWatching * TheUsersWatching;
+
+	TheMoviesId  = (int *)malloc(MaxMovies*sizeof(int));
+	TheUsersWatching = (UsersWatching *)malloc(MaxUsers*sizeof(UsersWatching));
+
+	strcpy(FileName,RatingsFileName);
+	strcat(FileName,"_movies.csv");
+	f = fopen(FileName, "rt");
+	if(!f){
+		printf("%s\n",FileName);
+		return -1;
+	} 
+
+	g = fopen(MoviesSequentialFileName, "wt");
+	if(!g){
+		printf("%s\n",MoviesSequentialFileName);
+		return -1;
+	} 
+
+	// Skipping the first line
+	do{
+		fscanf(f,"%c",&c);
+	}while(c != '\n');
+	
+	i = 0;
+	Nb_movies = 0;
+	fscanf(f,"%i;%i;%f;%i\n",&movie_id,&user_id,&rating,&timestamp);
+	CurrentMovieId = movie_id;
+	NbUsersWatching = 0;
+	
+	while(!feof(f)){
+		if(movie_id != CurrentMovieId){
+			j = CurrentMovieId;
+			TheMoviesTmp[j-1].Movie_Id = j;
+			if(NbUsersWatching <= TmaxUsersWatching){
+				TheMoviesTmp[j-1].NbUsersWatching = NbUsersWatching;
+				for(k=0;(k < NbUsersWatching); k++){
+					TheMoviesTmp[j-1].TheUsersWatching[k].User_Id = TheUsersWatching[k].User_Id;
+					TheMoviesTmp[j-1].TheUsersWatching[k].Score = TheUsersWatching[k].Score;
+					TheMoviesTmp[j-1].TheUsersWatching[k].Timestamp = TheUsersWatching[k].Timestamp;
+				}
+			}else{
+				TheMoviesTmp[j-1].NbUsersWatching = TmaxUsersWatching;
+				for(k=0;(k < TmaxUsersWatching); k++){
+					TheMoviesTmp[j-1].TheUsersWatching[k].User_Id = TheUsersWatching[(NbUsersWatching - TmaxUsersWatching) + k].User_Id;
+					TheMoviesTmp[j-1].TheUsersWatching[k].Score = TheUsersWatching[(NbUsersWatching - TmaxUsersWatching) + k].Score;
+					TheMoviesTmp[j-1].TheUsersWatching[k].Timestamp = TheUsersWatching[(NbUsersWatching - TmaxUsersWatching) + k].Timestamp;
+				}
+			}
+
+			fprintf(g,"%i",j);
+			for(k=0;(k < NbUsersWatching); k++){
+				fprintf(g,"(%i,%.1f)",TheUsersWatching[k].User_Id,TheUsersWatching[k].Score);
+			}
+			fprintf(g,"\n");
+
+			for(k=CurrentMovieId+1;(k <= movie_id-1); k++){
+				fprintf(g,"%i\n",k);
+				TheMoviesTmp[k-1].Movie_Id = k;
+				TheMoviesTmp[k-1].NbUsersWatching = 0;
+			}
+			CurrentMovieId = movie_id;
+			NbUsersWatching = 0;
+		}
+
+		TheUsersWatching[NbUsersWatching].User_Id = user_id;
+		TheUsersWatching[NbUsersWatching].Score = rating;
+		TheUsersWatching[NbUsersWatching].Timestamp = timestamp;
+		(NbUsersWatching)++;
+		
+		j = 0;
+		new_movie = 1;
+		do{
+			if(j < Nb_movies){
+				if(TheMoviesId[j] == movie_id){
+					new_movie = 0;
+				}
+			}
+			j++;
+		}while((j<Nb_movies)&&(new_movie == 1));
+		
+		if(new_movie == 1){
+			TheMoviesId[Nb_movies] = movie_id;
+			Nb_movies++;
+		}
+
+		i++;
+		fscanf(f,"%i;%i;%f;%i\n",&movie_id,&user_id,&rating,&timestamp);
+		if(feof(f)){
+			if(movie_id == CurrentMovieId){
+				TheUsersWatching[NbUsersWatching].User_Id = user_id;
+				TheUsersWatching[NbUsersWatching].Score = rating;
+				TheUsersWatching[NbUsersWatching].Timestamp = timestamp;
+				(NbUsersWatching)++;
+			}
+
+			j = CurrentMovieId;
+			TheMoviesTmp[j-1].Movie_Id = j;
+			if(NbUsersWatching <= TmaxUsersWatching){
+				TheMoviesTmp[j-1].NbUsersWatching = NbUsersWatching;
+				for(k=0;(k < NbUsersWatching); k++){
+					TheMoviesTmp[j-1].TheUsersWatching[k].User_Id = TheUsersWatching[k].User_Id;
+					TheMoviesTmp[j-1].TheUsersWatching[k].Score = TheUsersWatching[k].Score;
+					TheMoviesTmp[j-1].TheUsersWatching[k].Timestamp = TheUsersWatching[k].Timestamp;
+				}
+			}else{
+				TheMoviesTmp[j-1].NbUsersWatching = TmaxUsersWatching;
+				for(k=0;(k < TmaxUsersWatching); k++){
+					TheMoviesTmp[j-1].TheUsersWatching[k].User_Id = TheUsersWatching[(NbUsersWatching - TmaxUsersWatching) + k].User_Id;
+					TheMoviesTmp[j-1].TheUsersWatching[k].Score = TheUsersWatching[(NbUsersWatching - TmaxUsersWatching) + k].Score;
+					TheMoviesTmp[j-1].TheUsersWatching[k].Timestamp = TheUsersWatching[(NbUsersWatching - TmaxUsersWatching) + k].Timestamp;
+				}
+			}
+
+			fprintf(g,"%i",j);
+			for(k=0;(k < NbUsersWatching); k++){
+				fprintf(g,"(%i,%.1f)",TheUsersWatching[k].User_Id,TheUsersWatching[k].Score);
+			}
+			fprintf(g,"\n");
+			
+			if(movie_id != CurrentMovieId){
+				for(k=CurrentMovieId+1;(k <= movie_id-1); k++){
+					fprintf(g,"%i\n",k);
+					TheMoviesTmp[k-1].Movie_Id = k;
+					TheMoviesTmp[k-1].NbUsersWatching = 0;
+				}
+				TheMoviesTmp[movie_id-1].Movie_Id = movie_id;
+				TheMoviesTmp[movie_id-1].NbUsersWatching = 1;
+				TheMoviesTmp[movie_id-1].TheUsersWatching[0].User_Id = user_id;
+				TheMoviesTmp[movie_id-1].TheUsersWatching[0].Score = rating;
+				TheMoviesTmp[movie_id-1].TheUsersWatching[0].Timestamp = timestamp;
+				
+				fprintf(g,"%i(%i,%.1f)\n",movie_id,user_id,rating);
+				Nb_movies++;
+			}
+			i++;
+		}
+	}
+	fclose(f);
+	fclose(g);
+
+	free(TheMoviesId);
+	free(TheUsersWatching);
+	
+	(*NbMovies) = Nb_movies;
+	return i;
+}
+
+void UpdateUsers(User * TheUsersTmp, User * TheUsers, int NbUsers){
 	int i,j,k;
 	
 	for(i=0;(i < NbUsers);i++){
 		j = 0;
-		while((j < NbUsersTmp)&&(TheUsersTmp[j].User_Id != TheUsers[i].User_Id)){
+		while(TheUsersTmp[j].User_Id != TheUsers[i].User_Id){
 			j++;
 		}
-		if(j < NbUsersTmp){
-			TheUsers[i].NbWatchedMovies = TheUsersTmp[j].NbWatchedMovies;
-			for(k=0;(k < TheUsersTmp[j].NbWatchedMovies); k++){
-				TheUsers[i].LastWatchedMovies[k].Movie_Id = TheUsersTmp[j].LastWatchedMovies[k].Movie_Id;
-				TheUsers[i].LastWatchedMovies[k].Score = TheUsersTmp[j].LastWatchedMovies[k].Score;
-				TheUsers[i].LastWatchedMovies[k].Timestamp = TheUsersTmp[j].LastWatchedMovies[k].Timestamp;
-			}
+		TheUsers[i].NbWatchedMovies = TheUsersTmp[j].NbWatchedMovies;
+		for(k=0;(k < TheUsersTmp[j].NbWatchedMovies); k++){
+			TheUsers[i].LastWatchedMovies[k].Movie_Id = TheUsersTmp[j].LastWatchedMovies[k].Movie_Id;
+			TheUsers[i].LastWatchedMovies[k].Score = TheUsersTmp[j].LastWatchedMovies[k].Score;
+			TheUsers[i].LastWatchedMovies[k].Timestamp = TheUsersTmp[j].LastWatchedMovies[k].Timestamp;
 		}
 	}
-	
-	/**
-	printf("\n_________________________________________________________________________\n");
-	for(i=0;(i < NbUsers);i++){
-		printf("%i,%i,%c,%s,%s,%i,",TheUsers[i].User_Id,TheUsers[i].age,TheUsers[i].gender,TheUsers[i].occupation,TheUsers[i].zipCode,TheUsers[i].NbWatchedMovies);
-		for(k=0;(k < TheUsers[i].NbWatchedMovies); k++){
-			printf("(%i,%.0f,%i)",TheUsers[i].LastWatchedMovies[k].Movie_Id,TheUsers[i].LastWatchedMovies[k].Score,TheUsers[i].LastWatchedMovies[k].Timestamp);
-		}
-		printf("\n");
-	}
-	printf("\n_________________________________________________________________________\n");
-	**/
-	
 	return;
 }
 
-// Function of partitionnement for the QuickSortMovies
-int PartitionUsersWatching_Timestamp_CF(UsersWatching_CF TheUsersWatching[MaxUsers], int low, int high) {
-    float pivot = TheUsersWatching[high].Timestamp; // pivot
-    int i = (low - 1); // Index of the lowest element
-
-    for (int j = low; j <= high - 1; j++) {
-        // If the current element is lower than pivot
-        if (TheUsersWatching[j].Timestamp <= pivot) {
-            i++; // Increments the index of the lowest element 
-			
-            swapInt(&TheUsersWatching[i].User_Id, &TheUsersWatching[j].User_Id);
-            swapInt(&TheUsersWatching[i].Timestamp, &TheUsersWatching[j].Timestamp);
-            swapFloat(&TheUsersWatching[i].Score, &TheUsersWatching[j].Score);
-        }
-    }
-    swapInt(&TheUsersWatching[i+1].User_Id, &TheUsersWatching[high].User_Id);
-    swapInt(&TheUsersWatching[i+1].Timestamp, &TheUsersWatching[high].Timestamp);
-    swapFloat(&TheUsersWatching[i+1].Score, &TheUsersWatching[high].Score);
-    return (i + 1);
-}
-
-
-// QuickSort of the users who watched a movie -- by Timestamp
-void QuicksortUsersWatching_Timestamp_CF(UsersWatching_CF TheUsersWatching[MaxUsers], int low, int high) {
-	int i,pi,piMax, piMin;
-    if (low < high) {
-        pi = PartitionUsersWatching_Timestamp_CF(TheUsersWatching, low, high);
-		piMax = pi;
-		piMin = pi;
-		i = 0;
-		while(i < piMin){
-			if(TheUsersWatching[i].Timestamp == TheUsersWatching[pi].Timestamp){
-				swapInt(&TheUsersWatching[i].User_Id, &TheUsersWatching[piMin-1].User_Id);
-				swapInt(&TheUsersWatching[i].Timestamp, &TheUsersWatching[piMin-1].Timestamp);
-				swapFloat(&TheUsersWatching[i].Score, &TheUsersWatching[piMin-1].Score);
-				piMin--;
-				i = 0;
-			}else{
-				i++;
-			}
-		}
-		QuicksortUsersWatching_Timestamp_CF(TheUsersWatching, low, piMin - 1);
-        QuicksortUsersWatching_Timestamp_CF(TheUsersWatching, piMax + 1, high);
-    }
-}
-
-
-void UpdateMovies_CF(User_CF TheUsers[MaxUsers], int NbUsers, Movie_CF TheMovies[MaxMovies], int NbMovies, int TmaxUsersWatching){
-	int i,k, movie_id,NbUsersWatching[MaxMovies];
-	UsersWatching_CF TheUsersWatching[MaxMovies][MaxUsers];
+void UpdateMovies(Movie * TheMoviesTmp, Movie * TheMovies, int NbMovies){
+	int i,j,k;
 	
-	for(i=1;(i<=NbMovies);i++){
-		NbUsersWatching[i] = 0;
-	}
-	
-	for(i=0;(i < NbUsers);i++){
-		for(k=0;(k < TheUsers[i].NbWatchedMovies); k++){
-			movie_id = TheUsers[i].LastWatchedMovies[k].Movie_Id;
-			TheUsersWatching[movie_id][NbUsersWatching[movie_id]].User_Id = TheUsers[i].User_Id;
-			TheUsersWatching[movie_id][NbUsersWatching[movie_id]].Score = TheUsers[i].LastWatchedMovies[k].Score;
-			TheUsersWatching[movie_id][NbUsersWatching[movie_id]].Timestamp = TheUsers[i].LastWatchedMovies[k].Timestamp;
-			NbUsersWatching[movie_id]++;
-		}
-	}
-	
-	for(i=1;(i <= NbMovies);i++){
-		QuicksortUsersWatching_Timestamp_CF(TheUsersWatching[i],0,NbUsersWatching[i]-1);
-		
-		if((TmaxUsersWatching <= 0)||(NbUsersWatching[i] <= TmaxUsersWatching)){
-			TheMovies[i-1].NbUsersWatching = NbUsersWatching[i];
-			for(k=0;(k < NbUsersWatching[i]); k++){
-				TheMovies[i-1].TheUsersWatching[k].User_Id = TheUsersWatching[i][k].User_Id;
-				TheMovies[i-1].TheUsersWatching[k].Score = TheUsersWatching[i][k].Score;
-				TheMovies[i-1].TheUsersWatching[k].Timestamp = TheUsersWatching[i][k].Timestamp;
-			}
-		}else{
-			TheMovies[i-1].NbUsersWatching = TmaxUsersWatching;
-			for(k=0;(k < NbUsersWatching[i]); k++){
-				TheMovies[i-1].TheUsersWatching[k].User_Id = TheUsersWatching[i][(NbUsersWatching[i] - TmaxUsersWatching) + k].User_Id;
-				TheMovies[i-1].TheUsersWatching[k].Score = TheUsersWatching[i][(NbUsersWatching[i] - TmaxUsersWatching) + k].Score;
-				TheMovies[i-1].TheUsersWatching[k].Timestamp = TheUsersWatching[i][(NbUsersWatching[i] - TmaxUsersWatching) + k].Timestamp;
-			}
-		}
-		
-	}
-	
-/**	
 	for(i=0;(i < NbMovies);i++){
-		printf("%i",TheMovies[i].Movie_Id);
-//		printf("%i,%i,",TheMovies[i].Movie_Id,TheMovies[i].NbUsersWatching);
-		for(k=0;(k < TheMovies[i].NbUsersWatching); k++){
-			printf("(%i,%.0f)",TheMovies[i].TheUsersWatching[k].User_Id,TheMovies[i].TheUsersWatching[k].Score);
-//			printf("(%i,%.0f,%i)",TheMovies[i].TheUsersWatching[k].User_Id,TheMovies[i].TheUsersWatching[k].Score,TheMovies[i].TheUsersWatching[k].Timestamp);
-//			printf("%i\t%i\t%.0f\t%i\n",TheMovies[i].Movie_Id,TheMovies[i].TheUsersWatching[k].User_Id,TheMovies[i].TheUsersWatching[k].Score,TheMovies[i].TheUsersWatching[k].Timestamp);
+		j = 0;
+		while(TheMoviesTmp[j].Movie_Id != TheMovies[i].Movie_Id){
+			j++;
 		}
-//		if(TheMovies[i].NbUsersWatching == 0){
-//			printf("%i\t-1\t-1\t-1\n",TheMovies[i].Movie_Id);
-//		}
-		printf("\n");
+		TheMovies[i].NbUsersWatching = TheMoviesTmp[j].NbUsersWatching;
+		for(k=0;(k < TheMoviesTmp[j].NbUsersWatching); k++){
+			TheMovies[i].TheUsersWatching[k].User_Id = TheMoviesTmp[j].TheUsersWatching[k].User_Id;
+			TheMovies[i].TheUsersWatching[k].Score = TheMoviesTmp[j].TheUsersWatching[k].Score;
+			TheMovies[i].TheUsersWatching[k].Timestamp = TheMoviesTmp[j].TheUsersWatching[k].Timestamp;
+		}
 	}
-**/
-	
 	return;
 }
-
 
 // Sampling of the Score to obtain the corresponding state
 int StateOf_CF(float Score){
@@ -510,7 +563,6 @@ int SymbolOf_Occupation(char Occupation[50], char TheOccupations[MaxOccupations]
 	return symbol;
 }
 
-
 int FrequencyOf_ZipCodeGroups(char FirstChar_ZipCodeGroup[MaxZipCodeGroups], int FreqOfThe_ZipCodeGroup[MaxZipCodeGroups]){
 	int i, Nb_ZipCodeGroups;
 	int Frequency[18] = {96,97,101,62,77,110,78,67,56,160,2,1,2,2,2,1,2,20};
@@ -552,7 +604,7 @@ int SymbolOf_ZipCode(char ZipCode[6], char FirstChar_ZipCodeGroup[MaxZipCodeGrou
 
 
 // Index of a user in the array 'TheUsers' according to its 'User_Id'
-int IndexOfUser_CF(int User_Id, User_CF TheUsers[MaxUsers], int NbUsers){
+int IndexOfUser(int User_Id, User * TheUsers, int NbUsers){
 	int i;
 	
 	for(i=0;(i < NbUsers);i++){
@@ -565,7 +617,7 @@ int IndexOfUser_CF(int User_Id, User_CF TheUsers[MaxUsers], int NbUsers){
 
 
 // Constructs the Markov chain associated with each movie m
-void ConstructMCsOfMovie_CF(Movie_CF m, MC_CF TheMCs[MaxFeatures], int SequencesOfMovie[MaxFeatures][MaxUsers], int NbFeatures, User_CF TheUsers[MaxUsers], int NbUsers, char TheOccupations[MaxOccupations][50], int FreqOfThe_Occupations[MaxOccupations], int NbOccupations, char FirstChar_ZipCodeGroup[MaxZipCodeGroups], int FreqOfThe_ZipCodeGroup[MaxZipCodeGroups], int Nb_ZipCodeGroups, FILE ** f){
+void ConstructMCsOfMovie(Movie m, MC * TheMCs, int ** Sequences, int NbFeatures, User * TheUsers, int NbUsers, char TheOccupations[MaxOccupations][50], int FreqOfThe_Occupations[MaxOccupations], int NbOccupations, char FirstChar_ZipCodeGroup[MaxZipCodeGroups], int FreqOfThe_ZipCodeGroup[MaxZipCodeGroups], int Nb_ZipCodeGroups, FILE ** f){
 	int i, j, UserIndex, state;
 	
 	for(j=0;(j < NbFeatures);j++){
@@ -580,7 +632,7 @@ void ConstructMCsOfMovie_CF(Movie_CF m, MC_CF TheMCs[MaxFeatures], int Sequences
 		}
 		
 		/* Symbols */
-		UserIndex = IndexOfUser_CF(m.TheUsersWatching[i].User_Id,TheUsers,NbUsers);
+		UserIndex = IndexOfUser(m.TheUsersWatching[i].User_Id,TheUsers,NbUsers);
 		if(UserIndex != -1){
 			TheMCs[0].Elements[i].Symbol = SymbolOf_Age(TheUsers[UserIndex].age);
 			TheMCs[1].Elements[i].Symbol = (TheUsers[UserIndex].gender == 'M') ? 1 : 2;
@@ -588,7 +640,7 @@ void ConstructMCsOfMovie_CF(Movie_CF m, MC_CF TheMCs[MaxFeatures], int Sequences
 			TheMCs[3].Elements[i].Symbol = SymbolOf_ZipCode(TheUsers[UserIndex].zipCode,FirstChar_ZipCodeGroup,FreqOfThe_ZipCodeGroup,Nb_ZipCodeGroups);
 			
 			for(j=0;(j < NbFeatures);j++){
-				SequencesOfMovie[j][i] = TheMCs[j].Elements[i].Symbol - 1;
+				Sequences[j][i] = TheMCs[j].Elements[i].Symbol - 1;
 			}
 		}
 	}
@@ -596,7 +648,7 @@ void ConstructMCsOfMovie_CF(Movie_CF m, MC_CF TheMCs[MaxFeatures], int Sequences
 	fprintf(*f,"_______________________________________________________________\n");
 	for(j=0;(j < NbFeatures);j++){
 		fprintf(*f,"delta(m_%i,%i):\t",m.Movie_Id,j+1);
-		DisplayMCfile_CF(TheMCs[j],f);
+		DisplayMCfile(TheMCs[j],f);
 	}
 	
 	return;
@@ -604,7 +656,7 @@ void ConstructMCsOfMovie_CF(Movie_CF m, MC_CF TheMCs[MaxFeatures], int Sequences
 
 
 // Constructs all the initial HMMs associated with each movie
-int InitialHMMsOfMovie_CF(MC_CF TheMCsOfMovie[MaxFeatures], int NbFeatures, HMM Lambda[MaxFeatures]){
+int InitialHMMsOfMovie(MC * TheMCsOfMovie, int NbFeatures, HMM Lambda[MaxFeatures]){
 	int NbSymbols, i,j,k,IndexFeature,State,NextState,Symbol,From[MaxStates],UseOfState[MaxStates];
 	double Sum;
 	
@@ -740,37 +792,4 @@ int InitialHMMsOfMovie_CF(MC_CF TheMCsOfMovie[MaxFeatures], int NbFeatures, HMM 
 	
 	return NbSymbols;
 }	
-
-
-void DistancesMovieVectors_CF(double TheMovieVectors[MaxMovies][MaxFeatures*MaxSymbols], int NbMovies, int NbComponents, double Distances[2][MaxMovies][MaxMovies], FILE ** f){
-	int j,l;
-	
-    for (j = 0; j < NbMovies; j++) {
-		for (l = 0; l < NbMovies; l++) {
-			if(j != l){
-				Distances[0][j][l] = EuclideanDistance(TheMovieVectors[j], TheMovieVectors[l], NbComponents);
-				Distances[1][j][l] = ManhattanDistance(TheMovieVectors[j], TheMovieVectors[l], NbComponents);
-			}else{
-				Distances[0][j][l] = 0.0;
-				Distances[1][j][l] = 0.0;
-			}
-		}
-	}
-
-	fprintf((*f),"\n==============  Euclidean distances ===========\n\n");
-    for (j = 0; j < NbMovies; j++) {
-		for (l = j; l < NbMovies; l++) {
-			fprintf((*f),"D(%i,%i) = %g\n",j+1,l+1,Distances[0][j][l]);
-		}
-	}
-	
-	fprintf((*f),"\n==============  Manhattan distances ===========\n\n");
-    for (j = 0; j < NbMovies; j++) {
-		for (l = j; l < NbMovies; l++) {
-			fprintf((*f),"D(%i,%i) = %g\n",j+1,l+1,Distances[1][j][l]);
-		}
-	}
-	
-	return;
-}
 
